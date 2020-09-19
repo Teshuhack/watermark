@@ -1,12 +1,11 @@
-﻿using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Threading.Tasks;
+using Watermark.Models;
 using Watermark.Services;
 
 namespace Watermark.Controllers
@@ -15,37 +14,23 @@ namespace Watermark.Controllers
     [ApiController]
     public class ImagesController : ControllerBase
     {
-        private IWebHostEnvironment _webHostEnvironment;
-        private ICloudinary _cloudinaryService;
+        private readonly ICloudinary _cloudinaryService;
 
-        public ImagesController(IWebHostEnvironment webHostEnvironment, ICloudinary cloudinaryService)
+        public ImagesController(ICloudinary cloudinaryService)
         {
             _cloudinaryService = cloudinaryService;
-            _webHostEnvironment = webHostEnvironment;
         }
 
         [Route("upload")]
-        public async Task<string> UploadImageAsync(IFormFile file)
+        public async Task<string> UploadImageAsync([FromForm] UploadInfo uploadInfo)
         {
             try
             {
-                if (file == null || file.Length == 0)
-                {
-                    return null;
-                }
-
-                string path = Path.Combine(_webHostEnvironment.ContentRootPath, "Images");
-                string watermarkedImagePath = Path.Combine(path, file.FileName);
-                if (!Directory.Exists(path))
-                {
-                    Directory.CreateDirectory(path);
-                }
-
-                using var stream = new MemoryStream();
-                await file.CopyToAsync(stream);
+                var images = uploadInfo.Images;
+                var watermarkText = uploadInfo.WatermarkText;
 
                 using var watermarkedStream = new MemoryStream();
-                using var img = Image.FromStream(stream);
+                using var img = Image.FromStream(images.OpenReadStream());
                 using var graphic = Graphics.FromImage(img);
 
                 var font = new Font(FontFamily.GenericSansSerif, 20, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -56,9 +41,9 @@ namespace Watermark.Controllers
                 graphic.DrawString("test", font, brush, point);
 
                 img.Save(watermarkedStream, ImageFormat.Png);
-                img.Save(watermarkedImagePath);
+                watermarkedStream.Position = 0;
 
-                var response = await _cloudinaryService.UploadAsync(watermarkedImagePath);
+                var response = await _cloudinaryService.UploadAsync(watermarkedStream);
                 var watermarkedImageUrl = response.SecureUrl.ToString();
                 return JsonConvert.SerializeObject(new { watermarkedImageUrl });
             }
