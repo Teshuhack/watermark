@@ -1,12 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
-using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Threading.Tasks;
 using Watermark.Models;
-using Watermark.Services;
+using Watermark.Services.Storage;
 
 namespace Watermark.Controllers
 {
@@ -14,43 +15,37 @@ namespace Watermark.Controllers
     [ApiController]
     public class ImagesController : ControllerBase
     {
-        private readonly ICloudinary _cloudinaryService;
+        private readonly IStorage _localFileStorageService;
 
-        public ImagesController(ICloudinary cloudinaryService)
+        public ImagesController(IStorage localFileStorageService)
         {
-            _cloudinaryService = cloudinaryService;
+            _localFileStorageService = localFileStorageService;
         }
 
         [Route("upload")]
-        public async Task<string> UploadImageAsync([FromForm] UploadInfo uploadInfo)
+        [DisableRequestSizeLimit]
+        [RequestFormLimits(ValueCountLimit = int.MaxValue)]
+        public async Task<string> UploadImageAsync(List<IFormFile> images, [FromForm] string watermarkText, [FromForm] TextWatermarkOptions options)
         {
-            try
+            var responsesUrls = new List<string>();
+            foreach (var image in images)
             {
-                var images = uploadInfo.Images;
-                var watermarkText = uploadInfo.WatermarkText;
-
                 using var watermarkedStream = new MemoryStream();
-                using var img = Image.FromStream(images.OpenReadStream());
-                using var graphic = Graphics.FromImage(img);
+                using var img = Image.FromStream(image.OpenReadStream());
 
-                var font = new Font(FontFamily.GenericSansSerif, 20, FontStyle.Bold, GraphicsUnit.Pixel);
-                var color = Color.FromArgb(128, 255, 255, 255);
-                var brush = new SolidBrush(color);
-                var point = new Point(img.Width - 120, img.Height - 30);
-
-                graphic.DrawString("test", font, brush, point);
-
+                img.AddTextWatermark(watermarkText, options);
                 img.Save(watermarkedStream, ImageFormat.Png);
                 watermarkedStream.Position = 0;
 
-                var response = await _cloudinaryService.UploadAsync(watermarkedStream);
-                var watermarkedImageUrl = response.SecureUrl.ToString();
-                return JsonConvert.SerializeObject(new { watermarkedImageUrl });
+                await _localFileStorageService.UploadAsync(watermarkedStream, image.FileName);
+
+                responsesUrls.Add(image.FileName);
             }
-            catch (Exception ex)
-            {
-                return ex.Message;
-            }
+
+            _localFileStorageService.CreateZip();
+            _localFileStorageService.DeleteUploadFolder();
+
+            return JsonConvert.SerializeObject(new { responsesUrls });
         }
     }
 }
