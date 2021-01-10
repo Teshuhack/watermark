@@ -1,7 +1,12 @@
-﻿using Microsoft.AspNetCore.Hosting;
+﻿using Microsoft.AspNetCore.Http;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Threading.Tasks;
+using Watermark.Models;
 
 namespace Watermark.Services.Storage
 {
@@ -11,40 +16,68 @@ namespace Watermark.Services.Storage
 
         private readonly string UploadFolderName = "Upload";
 
+        private readonly string WatermarkFolderName = "Watermark";
+
         private readonly string ArchiveFileName = "Result.zip";
 
-        private readonly IWebHostEnvironment _webHostEnvironment;
+        private string UploadFolder { get; set; }
 
-        public LocalFileStorageService(IWebHostEnvironment webHostEnvironment)
+        private string WatermarkFolder { get; set; }
+
+        public LocalFileStorageService()
         {
-            _webHostEnvironment = webHostEnvironment;
+            UploadFolder = Path.Combine(ResourceFolderName, UploadFolderName);
+            WatermarkFolder = Path.Combine(ResourceFolderName, WatermarkFolderName);
         }
 
-        public async Task UploadAsync(Stream stream, string fileName)
+        public async Task UploadFileAsync(List<IFormFile> files)
         {
-            var fulllResourcePath = Path.Combine(_webHostEnvironment.ContentRootPath, ResourceFolderName, UploadFolderName);
-            Directory.CreateDirectory(fulllResourcePath);
+            foreach (var file in files)
+            {
+                using var image = Image.FromStream(file.OpenReadStream());
+                await SaveImageAsync(image, UploadFolder, file.FileName);
+            }
+        }
 
-            var fileLocation = Path.Combine(fulllResourcePath, fileName);
-            using var fileStream = new FileStream(fileLocation, FileMode.Create);
+        public async Task AddWatermarkAsync(string text, TextWatermarkOptions options)
+        {
+            var files = GetFiles();
+            Directory.CreateDirectory(WatermarkFolder);
 
-            await stream.CopyToAsync(fileStream);
+            foreach (var filePath in files)
+            {
+                using var file = File.OpenRead(Path.Combine(UploadFolder, filePath));
+                using var image = Image.FromStream(file);
+                image.AddTextWatermark(text, options);
+
+                await SaveImageAsync(image, WatermarkFolder, filePath);
+            }
         }
 
         public void CreateZip()
         {
-            var sourceDirectoryName = @$"{ResourceFolderName}\{UploadFolderName}";
             var destinationArchiveFilePath = @$"{ResourceFolderName}\{ArchiveFileName}";
             if (File.Exists(destinationArchiveFilePath))
             {
                 File.Delete(destinationArchiveFilePath);
             }
-            ZipFile.CreateFromDirectory(sourceDirectoryName, destinationArchiveFilePath);
+            ZipFile.CreateFromDirectory(WatermarkFolder, destinationArchiveFilePath);
         }
 
-        public void DeleteUploadFolder()
+        private IEnumerable<string> GetFiles()
         {
-            Directory.Delete(@$"{ResourceFolderName}\{UploadFolderName}", true);
+            return Directory.EnumerateFiles(UploadFolder).Select(x => Path.GetFileName(x));
+        }
+
+        private async Task SaveImageAsync(Image image, string imagePath, string imageName)
+        {
+            using var memoryStream = new MemoryStream();
+            image.Save(memoryStream, ImageFormat.Png);
+            memoryStream.Position = 0;
+
+            var imageLocation = Path.Combine(imagePath, imageName);
+            using var fileStream = new FileStream(imageLocation, FileMode.Create);
+            await memoryStream.CopyToAsync(fileStream);
         }
     }
 }
